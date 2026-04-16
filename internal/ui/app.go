@@ -1,0 +1,624 @@
+package ui
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/caracal-os/caracal-software-installer/internal/catalog"
+	"github.com/caracal-os/caracal-software-installer/internal/installer"
+	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
+)
+
+var theme = struct {
+	Background tcell.Color
+	Panel      tcell.Color
+	Accent     tcell.Color
+	AccentWarm tcell.Color
+	Text       tcell.Color
+	Muted      tcell.Color
+	Success    tcell.Color
+	Warning    tcell.Color
+	Danger     tcell.Color
+}{
+	Background: tcell.NewHexColor(0x0f172a),
+	Panel:      tcell.NewHexColor(0x111827),
+	Accent:     tcell.NewHexColor(0x38bdf8),
+	AccentWarm: tcell.NewHexColor(0xf59e0b),
+	Text:       tcell.NewHexColor(0xe5eefb),
+	Muted:      tcell.NewHexColor(0x94a3b8),
+	Success:    tcell.NewHexColor(0x4ade80),
+	Warning:    tcell.NewHexColor(0xfbbf24),
+	Danger:     tcell.NewHexColor(0xfb7185),
+}
+
+type nodeRef struct {
+	Category    *catalog.Category
+	Subcategory *catalog.Subcategory
+}
+
+type App struct {
+	app              *tview.Application
+	pages            *tview.Pages
+	categories       []*catalog.Category
+	logo             string
+	currentCategory  *catalog.Category
+	currentSubcat    *catalog.Subcategory
+	selected         map[string]bool
+	states           map[string]installer.PackageState
+	tree             *tview.TreeView
+	packageTable     *tview.Table
+	details          *tview.TextView
+	header           *tview.TextView
+	status           *tview.TextView
+	selectedRowIndex int
+}
+
+func New(categories []*catalog.Category, logo string) *App {
+	ui := &App{
+		app:          tview.NewApplication(),
+		pages:        tview.NewPages(),
+		categories:   categories,
+		logo:         logo,
+		selected:     make(map[string]bool),
+		states:       make(map[string]installer.PackageState),
+		header:       tview.NewTextView(),
+		status:       tview.NewTextView(),
+		tree:         tview.NewTreeView(),
+		packageTable: tview.NewTable(),
+		details:      tview.NewTextView(),
+	}
+
+	ui.refreshStates()
+	ui.buildLayout()
+	ui.populateTree()
+
+	if len(categories) > 0 {
+		ui.setCurrentCategory(categories[0])
+	}
+
+	return ui
+}
+
+func (a *App) Run() error {
+	return a.app.SetRoot(a.pages, true).EnableMouse(true).Run()
+}
+
+func (a *App) buildLayout() {
+	a.app.SetInputCapture(a.handleGlobalKeys)
+
+	a.header.
+		SetDynamicColors(true).
+		SetRegions(false).
+		SetWrap(false).
+		SetTextAlign(tview.AlignLeft).
+		SetText(a.renderHeader()).
+		SetBorderPadding(1, 0, 2, 2)
+	a.header.SetBackgroundColor(theme.Background)
+
+	a.status.
+		SetDynamicColors(true).
+		SetTextAlign(tview.AlignLeft).
+		SetWrap(false).
+		SetBorderPadding(0, 0, 2, 2)
+	a.status.SetBackgroundColor(theme.Background)
+
+	a.tree.SetBorder(true)
+	a.tree.SetTitle(" Library ")
+	a.tree.SetGraphics(true)
+	a.tree.SetTopLevel(1)
+	a.tree.SetBackgroundColor(theme.Panel)
+	a.tree.SetBorderColor(theme.Accent)
+	a.tree.SetChangedFunc(func(node *tview.TreeNode) {
+		ref, _ := node.GetReference().(*nodeRef)
+		if ref == nil {
+			return
+		}
+		if ref.Subcategory != nil {
+			a.currentCategory = ref.Category
+			a.currentSubcat = ref.Subcategory
+			a.selectedRowIndex = 0
+			a.refreshPackageTable()
+			return
+		}
+		if ref.Category != nil {
+			a.setCurrentCategory(ref.Category)
+		}
+	})
+	a.tree.SetSelectedFunc(func(node *tview.TreeNode) {
+		node.SetExpanded(!node.IsExpanded())
+	})
+
+	a.packageTable.SetBorder(true)
+	a.packageTable.SetTitle(" Queue ")
+	a.packageTable.SetSelectable(true, false)
+	a.packageTable.SetFixed(1, 0)
+	a.packageTable.SetBackgroundColor(theme.Panel)
+	a.packageTable.SetBorderColor(theme.AccentWarm)
+	a.packageTable.SetSelectedStyle(tcell.StyleDefault.Background(theme.AccentWarm).Foreground(theme.Background))
+	a.packageTable.SetSelectionChangedFunc(func(row, _ int) {
+		if row <= 0 {
+			a.selectedRowIndex = 0
+		} else {
+			a.selectedRowIndex = row - 1
+		}
+		a.refreshDetails()
+	})
+	a.packageTable.SetSelectedFunc(func(row, _ int) {
+		if row > 0 {
+			a.toggleSelected(row - 1)
+		}
+	})
+	a.packageTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Key() {
+		case tcell.KeyTAB:
+			a.app.SetFocus(a.tree)
+			return nil
+		case tcell.KeyRune:
+			if event.Rune() == ' ' {
+				row, _ := a.packageTable.GetSelection()
+				if row > 0 {
+					a.toggleSelected(row - 1)
+				}
+				return nil
+			}
+		}
+		return event
+	})
+
+	a.details.
+		SetDynamicColors(true).
+		SetWordWrap(true).
+		SetWrap(true).
+		SetBorder(true).
+		SetTitle(" Details ")
+	a.details.SetBackgroundColor(theme.Panel)
+	a.details.SetBorderColor(theme.Accent)
+	a.details.SetTextColor(theme.Text)
+
+	content := tview.NewFlex().
+		AddItem(a.tree, 30, 1, true).
+		AddItem(
+			tview.NewFlex().
+				SetDirection(tview.FlexRow).
+				AddItem(a.packageTable, 0, 2, false).
+				AddItem(a.details, 0, 1, false),
+			0,
+			3,
+			false,
+		)
+
+	root := tview.NewFlex().
+		SetDirection(tview.FlexRow).
+		AddItem(a.header, 5, 0, false).
+		AddItem(content, 0, 1, true).
+		AddItem(a.status, 2, 0, false)
+
+	root.SetBackgroundColor(theme.Background)
+	a.pages.AddPage("main", root, true, true)
+	if a.logo != "" {
+		a.pages.AddPage("splash", a.buildSplash(), true, true)
+	}
+	a.updateStatus()
+}
+
+func (a *App) buildSplash() tview.Primitive {
+	logoView := tview.NewTextView().
+		SetTextAlign(tview.AlignCenter).
+		SetText(a.renderSplash()).
+		SetWrap(false)
+	logoView.SetTextColor(theme.Text)
+	logoView.SetBackgroundColor(theme.Background)
+
+	card := tview.NewFrame(logoView)
+	card.SetBorders(0, 0, 0, 0, 0, 0)
+	card.SetBorder(true)
+	card.SetTitle(" Caracal ")
+	card.SetBorderColor(theme.Accent)
+	card.SetBackgroundColor(theme.Panel)
+	card.AddText("Press Enter, Space, or Esc to continue", true, tview.AlignCenter, theme.Muted)
+
+	center := tview.NewFlex().
+		AddItem(nil, 0, 1, false).
+		AddItem(
+			tview.NewFlex().
+				SetDirection(tview.FlexRow).
+				AddItem(nil, 0, 1, false).
+				AddItem(card, 0, 1, true).
+				AddItem(nil, 0, 1, false),
+			0,
+			3,
+			true,
+		).
+		AddItem(nil, 0, 1, false)
+	center.SetBackgroundColor(theme.Background)
+
+	return center
+}
+
+func (a *App) populateTree() {
+	selectedTreeStyle := tcell.StyleDefault.Background(theme.Accent).Foreground(theme.Background)
+	root := tview.NewTreeNode("Software").
+		SetColor(theme.Text).
+		SetSelectable(false).
+		SetSelectedTextStyle(selectedTreeStyle)
+
+	for _, category := range a.categories {
+		categoryNode := tview.NewTreeNode(category.Name).
+			SetColor(theme.Accent).
+			SetReference(&nodeRef{Category: category}).
+			SetSelectedTextStyle(selectedTreeStyle)
+
+		for _, subcategory := range category.Subcategories {
+			count := len(subcategory.Packages)
+			label := fmt.Sprintf("%s [%d]", subcategory.Name, count)
+			subNode := tview.NewTreeNode(label).
+				SetColor(theme.Text).
+				SetReference(&nodeRef{
+					Category:    category,
+					Subcategory: subcategory,
+				}).
+				SetSelectedTextStyle(selectedTreeStyle)
+			categoryNode.AddChild(subNode)
+		}
+
+		categoryNode.SetExpanded(true)
+		root.AddChild(categoryNode)
+	}
+
+	root.SetExpanded(true)
+	a.tree.SetRoot(root).SetCurrentNode(root)
+}
+
+func (a *App) setCurrentCategory(category *catalog.Category) {
+	if category == nil {
+		return
+	}
+
+	a.currentCategory = category
+	if len(category.Subcategories) == 0 {
+		a.currentSubcat = nil
+	} else if a.currentSubcat == nil || !subcategoryBelongsTo(category, a.currentSubcat) {
+		a.currentSubcat = category.Subcategories[0]
+	}
+
+	a.selectedRowIndex = 0
+	a.refreshPackageTable()
+}
+
+func (a *App) refreshStates() {
+	for _, category := range a.categories {
+		for _, subcategory := range category.Subcategories {
+			for _, pkg := range subcategory.Packages {
+				a.states[pkg.ID] = installer.Detect(pkg)
+			}
+		}
+	}
+}
+
+func (a *App) refreshPackageTable() {
+	a.packageTable.Clear()
+
+	headers := []string{"Sel", "State", "Package", "Summary"}
+	for column, value := range headers {
+		cell := tview.NewTableCell(value).
+			SetTextColor(theme.AccentWarm).
+			SetSelectable(false).
+			SetExpansion(1)
+		a.packageTable.SetCell(0, column, cell)
+	}
+
+	if a.currentSubcat == nil || len(a.currentSubcat.Packages) == 0 {
+		a.packageTable.SetCell(1, 0, tview.NewTableCell("No installers yet").SetTextColor(theme.Muted).SetSelectable(false))
+		a.refreshDetails()
+		a.updateStatus()
+		return
+	}
+
+	for index, pkg := range a.currentSubcat.Packages {
+		state := a.states[pkg.ID]
+		mark := "[ ]"
+		markColor := theme.Muted
+		if a.selected[pkg.ID] {
+			mark = "[x]"
+			markColor = theme.Accent
+		}
+
+		statusText := "Ready"
+		statusColor := theme.Warning
+		if state.Installed {
+			statusText = "Installed"
+			statusColor = theme.Success
+		} else if !state.Available {
+			statusText = "Unavailable"
+			statusColor = theme.Danger
+		}
+
+		a.packageTable.SetCell(index+1, 0, tview.NewTableCell(mark).SetTextColor(markColor))
+		a.packageTable.SetCell(index+1, 1, tview.NewTableCell(statusText).SetTextColor(statusColor))
+		a.packageTable.SetCell(index+1, 2, tview.NewTableCell(pkg.Name).SetTextColor(theme.Text).SetExpansion(1))
+		a.packageTable.SetCell(index+1, 3, tview.NewTableCell(pkg.Summary).SetTextColor(theme.Muted).SetExpansion(4))
+	}
+
+	if a.selectedRowIndex >= len(a.currentSubcat.Packages) {
+		a.selectedRowIndex = len(a.currentSubcat.Packages) - 1
+	}
+	if a.selectedRowIndex < 0 {
+		a.selectedRowIndex = 0
+	}
+
+	a.packageTable.Select(a.selectedRowIndex+1, 0)
+	a.refreshDetails()
+	a.updateStatus()
+}
+
+func (a *App) refreshDetails() {
+	if a.currentCategory == nil || a.currentSubcat == nil {
+		a.details.SetText("[#94a3b8]Select a category to view installers.")
+		return
+	}
+
+	if len(a.currentSubcat.Packages) == 0 {
+		a.details.SetText(fmt.Sprintf(
+			"[#38bdf8]%s[-]\n[#e5eefb]%s[-]\n\n[#94a3b8]%s[-]",
+			a.currentSubcat.Name,
+			a.currentCategory.Name,
+			a.currentSubcat.Description,
+		))
+		return
+	}
+
+	if a.selectedRowIndex < 0 || a.selectedRowIndex >= len(a.currentSubcat.Packages) {
+		a.selectedRowIndex = 0
+	}
+
+	pkg := a.currentSubcat.Packages[a.selectedRowIndex]
+	state := a.states[pkg.ID]
+
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf("[#38bdf8]%s[-]  [#94a3b8]%s[-]\n", pkg.Name, pkg.Vendor))
+	builder.WriteString(fmt.Sprintf("[#e5eefb]%s[-]\n\n", pkg.Description))
+	builder.WriteString(fmt.Sprintf("[#f59e0b]Category[-]  %s / %s\n", a.currentCategory.Name, a.currentSubcat.Name))
+
+	stateLine := "[#fbbf24]Ready to install[-]"
+	if state.Installed {
+		stateLine = "[#4ade80]Already installed[-]"
+	} else if !state.Available {
+		stateLine = "[#fb7185]Not currently installable from the TUI[-]"
+	}
+	builder.WriteString(fmt.Sprintf("[#f59e0b]Status[-]    %s\n", stateLine))
+
+	if pkg.AvailabilityNote != "" {
+		builder.WriteString(fmt.Sprintf("[#f59e0b]Access[-]    [#94a3b8]%s[-]\n", pkg.AvailabilityNote))
+	}
+
+	if len(pkg.Notes) > 0 {
+		builder.WriteString("\n[#f59e0b]Notes[-]\n")
+		for _, note := range pkg.Notes {
+			builder.WriteString(fmt.Sprintf(" • %s\n", note))
+		}
+	}
+
+	builder.WriteString("\n[#f59e0b]Actions[-]\n")
+	for _, action := range pkg.Actions {
+		builder.WriteString(fmt.Sprintf(" • %s\n", action.Title))
+	}
+
+	a.details.SetText(builder.String())
+}
+
+func (a *App) updateStatus() {
+	selectedCount := len(a.selectedPackages())
+	totalCount := catalog.CountPackages(a.categories)
+	location := "Browse the catalog"
+	if a.currentCategory != nil && a.currentSubcat != nil {
+		location = fmt.Sprintf("%s / %s", a.currentCategory.Name, a.currentSubcat.Name)
+	}
+
+	a.status.SetText(fmt.Sprintf(
+		"[#e5eefb]%s[-]    [#94a3b8]%d selected[-]    [#94a3b8]%d packages in catalog[-]\n[#94a3b8]Tab switch panels  Space toggle  R review/install  C clear  Q quit[-]",
+		location,
+		selectedCount,
+		totalCount,
+	))
+}
+
+func (a *App) toggleSelected(index int) {
+	if a.currentSubcat == nil || index < 0 || index >= len(a.currentSubcat.Packages) {
+		return
+	}
+
+	pkg := a.currentSubcat.Packages[index]
+	state := a.states[pkg.ID]
+	if !state.Available {
+		message := fmt.Sprintf("%s is listed in the catalog, but it is not currently installable from the TUI.", pkg.Name)
+		if pkg.AvailabilityNote != "" {
+			message = pkg.AvailabilityNote
+		}
+		a.showInfoModal("Unavailable", message)
+		return
+	}
+
+	if a.selected[pkg.ID] {
+		delete(a.selected, pkg.ID)
+	} else {
+		a.selected[pkg.ID] = true
+	}
+
+	a.refreshPackageTable()
+}
+
+func (a *App) selectedPackages() []*catalog.Package {
+	var packages []*catalog.Package
+	for _, category := range a.categories {
+		for _, subcategory := range category.Subcategories {
+			for _, pkg := range subcategory.Packages {
+				if a.selected[pkg.ID] {
+					packages = append(packages, pkg)
+				}
+			}
+		}
+	}
+	return packages
+}
+
+func (a *App) reviewAndInstall() {
+	selected := a.selectedPackages()
+	if len(selected) == 0 {
+		a.showInfoModal("Nothing selected", "Select one or more packages before starting an install run.")
+		return
+	}
+
+	var builder strings.Builder
+	builder.WriteString("Install queue:\n\n")
+	for _, pkg := range selected {
+		builder.WriteString(" • ")
+		builder.WriteString(pkg.Name)
+		builder.WriteByte('\n')
+	}
+	builder.WriteString("\nThe TUI will suspend while installers run so sudo prompts and download output can use the terminal directly.")
+
+	modal := tview.NewModal().
+		SetText(builder.String()).
+		AddButtons([]string{"Install", "Cancel"}).
+		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+			a.pages.RemovePage("modal")
+			if buttonLabel == "Install" {
+				a.executeSelected(selected)
+			}
+		})
+	modal.SetBackgroundColor(theme.Background)
+
+	a.pages.AddPage("modal", modal, true, true)
+}
+
+func (a *App) executeSelected(packages []*catalog.Package) {
+	var results []installer.Result
+
+	a.app.Suspend(func() {
+		results = installer.Run(packages)
+	})
+
+	for _, result := range results {
+		if result.Success {
+			delete(a.selected, result.PackageID)
+		}
+	}
+
+	a.refreshStates()
+	a.refreshPackageTable()
+	a.showResults(results)
+}
+
+func (a *App) showResults(results []installer.Result) {
+	var successCount int
+	var failureCount int
+	var builder strings.Builder
+
+	for _, result := range results {
+		if result.Success {
+			successCount++
+			builder.WriteString(" • ")
+			builder.WriteString(result.PackageName)
+			builder.WriteString(": installed\n")
+			continue
+		}
+
+		failureCount++
+		builder.WriteString(" • ")
+		builder.WriteString(result.PackageName)
+		builder.WriteString(": ")
+		builder.WriteString(result.Error.Error())
+		builder.WriteByte('\n')
+	}
+
+	title := "Install summary"
+	if failureCount == 0 {
+		title = "Install complete"
+	}
+
+	a.showInfoModal(
+		title,
+		fmt.Sprintf("%d succeeded, %d failed.\n\n%s", successCount, failureCount, strings.TrimSpace(builder.String())),
+	)
+}
+
+func (a *App) showInfoModal(title string, message string) {
+	modal := tview.NewModal().
+		SetText(fmt.Sprintf("%s\n\n%s", title, message)).
+		AddButtons([]string{"Close"}).
+		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+			a.pages.RemovePage("modal")
+		})
+	modal.SetBackgroundColor(theme.Background)
+	a.pages.AddPage("modal", modal, true, true)
+}
+
+func (a *App) renderHeader() string {
+	return "[#38bdf8::b]Caracal Software Installer[-:-:-]\n[#e5eefb]Guided post-install setup for DAWs, plugins, and audio tooling[-:-:-]\n[#94a3b8]Queue multiple installers, move between categories, and run them in a single pass.[-:-:-]"
+}
+
+func (a *App) renderSplash() string {
+	return fmt.Sprintf(
+		"[#38bdf8::b]%s[-:-:-]\n\n[#e5eefb]Caracal Software Installer[-:-:-]\n[#94a3b8]Guided post-install setup for DAWs, plugins, instruments, and audio tooling.[-:-:-]",
+		tview.Escape(a.logo),
+	)
+}
+
+func (a *App) handleGlobalKeys(event *tcell.EventKey) *tcell.EventKey {
+	if a.pages.HasPage("splash") {
+		switch event.Key() {
+		case tcell.KeyEnter, tcell.KeyEsc:
+			a.pages.RemovePage("splash")
+			a.app.SetFocus(a.tree)
+			return nil
+		case tcell.KeyRune:
+			if event.Rune() == ' ' {
+				a.pages.RemovePage("splash")
+				a.app.SetFocus(a.tree)
+				return nil
+			}
+		}
+	}
+
+	switch event.Key() {
+	case tcell.KeyCtrlC:
+		a.app.Stop()
+		return nil
+	case tcell.KeyTAB:
+		if a.app.GetFocus() == a.tree {
+			a.app.SetFocus(a.packageTable)
+		} else {
+			a.app.SetFocus(a.tree)
+		}
+		return nil
+	}
+
+	if event.Key() != tcell.KeyRune {
+		return event
+	}
+
+	switch strings.ToLower(string(event.Rune())) {
+	case "q":
+		a.app.Stop()
+		return nil
+	case "c":
+		a.selected = make(map[string]bool)
+		a.refreshPackageTable()
+		return nil
+	case "r", "i":
+		a.reviewAndInstall()
+		return nil
+	}
+
+	return event
+}
+
+func subcategoryBelongsTo(category *catalog.Category, target *catalog.Subcategory) bool {
+	for _, subcategory := range category.Subcategories {
+		if subcategory == target {
+			return true
+		}
+	}
+	return false
+}
