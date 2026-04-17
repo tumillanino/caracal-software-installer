@@ -16,6 +16,29 @@ REAPER_VST_PATH="/usr/lib64/vst;/usr/lib64/vst3;/usr/local/lib64/vst;/usr/local/
 REAPER_LV2_PATH="/usr/lib64/lv2;/usr/local/lib64/lv2;~/.lv2"
 REAPER_CLAP_PATH="/usr/lib64/clap;/usr/local/lib64/clap;~/.clap;%CLAP_PATH%"
 
+resolve_bundled_reaper_icon() {
+    local script_dir=""
+    local candidates=()
+
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+    if [[ -n "${CARACAL_INSTALLER_REAPER_ICON:-}" ]]; then
+        candidates+=("${CARACAL_INSTALLER_REAPER_ICON}")
+    fi
+
+    candidates+=(
+        "/usr/share/caracal-software-installer/assets/images/reaper.png"
+        "${script_dir}/../assets/images/reaper.png"
+    )
+
+    for candidate in "${candidates[@]}"; do
+        if [[ -f "${candidate}" ]]; then
+            printf '%s\n' "${candidate}"
+            return
+        fi
+    done
+}
+
 set_reaper_ini_value() {
     local ini_file="$1"
     local key="$2"
@@ -104,6 +127,11 @@ EOF
 fi
 
 icon_source=""
+bundled_icon_source="$(resolve_bundled_reaper_icon || true)"
+if [ -n "${bundled_icon_source}" ]; then
+    icon_source="${bundled_icon_source}"
+fi
+
 for candidate in \
     "/root/.local/share/icons/hicolor/256x256/apps/reaper.png" \
     "/root/.local/share/icons/hicolor/128x128/apps/reaper.png" \
@@ -111,6 +139,9 @@ for candidate in \
     "/opt/REAPER/reaper.png" \
     "${REAPER_EXTRACT_DIR}/reaper.png"
 do
+    if [ -n "${icon_source}" ]; then
+        break
+    fi
     if [ -f "${candidate}" ]; then
         icon_source="${candidate}"
         break

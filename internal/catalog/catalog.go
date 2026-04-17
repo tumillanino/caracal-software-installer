@@ -16,7 +16,8 @@ type Package struct {
 	Notes            []string
 	AvailabilityNote string
 	InstalledMarkers []string
-	Actions          []Action
+	InstallActions   []Action
+	UninstallActions []Action
 }
 
 type Subcategory struct {
@@ -68,8 +69,11 @@ func Build(scriptDir string) []*Category {
 								"/opt/REAPER/reaper",
 								"/usr/local/share/applications/cockos-reaper.desktop",
 							},
-							Actions: []Action{
+							InstallActions: []Action{
 								{Title: "Install REAPER", Exec: sudoScript("install-reaper.sh")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall REAPER", Exec: sudoScript("uninstall-reaper.sh")},
 							},
 						},
 						{
@@ -86,8 +90,11 @@ func Build(scriptDir string) []*Category {
 								"/opt/renoise/renoise",
 								"/usr/local/share/applications/renoise.desktop",
 							},
-							Actions: []Action{
+							InstallActions: []Action{
 								{Title: "Install Renoise", Exec: sudoScript("install-renoise.sh")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall Renoise", Exec: sudoScript("uninstall-renoise.sh")},
 							},
 						},
 						{
@@ -104,8 +111,11 @@ func Build(scriptDir string) []*Category {
 								"/opt/bitwig-studio/bitwig-studio",
 								"/usr/local/share/applications/bitwig-studio.desktop",
 							},
-							Actions: []Action{
+							InstallActions: []Action{
 								{Title: "Install Bitwig Studio", Exec: sudoScript("install-bitwig.sh")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall Bitwig Studio", Exec: sudoScript("uninstall-bitwig.sh")},
 							},
 						},
 					},
@@ -137,8 +147,11 @@ func Build(scriptDir string) []*Category {
 								"/usr/local/bin/sunvox",
 								"/usr/local/share/applications/sunvox.desktop",
 							},
-							Actions: []Action{
+							InstallActions: []Action{
 								{Title: "Install SunVox", Exec: sudoScript("install-sunvox.sh")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall SunVox", Exec: sudoScript("uninstall-sunvox.sh")},
 							},
 						},
 						{
@@ -155,8 +168,11 @@ func Build(scriptDir string) []*Category {
 								"/usr/local/bin/virtual-ans",
 								"/usr/local/share/applications/virtual-ans.desktop",
 							},
-							Actions: []Action{
+							InstallActions: []Action{
 								{Title: "Install Virtual ANS", Exec: sudoScript("install-virtual-ans.sh")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall Virtual ANS", Exec: sudoScript("uninstall-virtual-ans.sh")},
 							},
 						},
 						{
@@ -194,8 +210,11 @@ func Build(scriptDir string) []*Category {
 								".vst3/TAL-NoiseMaker.vst3",
 								".vst/libTAL-NoiseMaker.so",
 							},
-							Actions: []Action{
+							InstallActions: []Action{
 								{Title: "Install TAL-Noisemaker", Exec: script("install-tal-noisemaker.sh")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall TAL-Noisemaker", Exec: script("uninstall-tal-noisemaker.sh")},
 							},
 						},
 					},
@@ -219,8 +238,11 @@ func Build(scriptDir string) []*Category {
 								"/usr/local/bin/Cardinal",
 								"/usr/local/lib64/vst3/Cardinal.vst3",
 							},
-							Actions: []Action{
+							InstallActions: []Action{
 								{Title: "Install Cardinal", Exec: sudoScript("install-cardinal.sh")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall Cardinal", Exec: sudoScript("uninstall-cardinal.sh")},
 							},
 						},
 						{
@@ -237,8 +259,11 @@ func Build(scriptDir string) []*Category {
 								"/usr/local/bin/*surge*",
 								"/usr/local/lib64/vst3/*Surge*",
 							},
-							Actions: []Action{
+							InstallActions: []Action{
 								{Title: "Install Surge XT", Exec: sudoScript("install-surge-xt.sh")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall Surge XT", Exec: sudoScript("uninstall-surge-xt.sh")},
 							},
 						},
 					},
@@ -262,8 +287,11 @@ func Build(scriptDir string) []*Category {
 								"/usr/local/bin/DecentSampler",
 								"/usr/local/lib64/vst3/DecentSampler.vst3",
 							},
-							Actions: []Action{
+							InstallActions: []Action{
 								{Title: "Install Decent Sampler", Exec: sudoScript("install-decent-sampler.sh")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall Decent Sampler", Exec: sudoScript("uninstall-decent-sampler.sh")},
 							},
 						},
 					},
@@ -295,8 +323,11 @@ func Build(scriptDir string) []*Category {
 								".vst3/Drum Locker.vst3",
 								".lv2/Drum Locker.lv2",
 							},
-							Actions: []Action{
+							InstallActions: []Action{
 								{Title: "Install Drum Locker", Exec: script("install-audio-assault-drumlocker.sh")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall Drum Locker", Exec: script("uninstall-audio-assault-drumlocker.sh")},
 							},
 						},
 						{
@@ -313,8 +344,11 @@ func Build(scriptDir string) []*Category {
 								".vst3/Amp Locker.vst3",
 								".lv2/Amp Locker.lv2",
 							},
-							Actions: []Action{
+							InstallActions: []Action{
 								{Title: "Install Amp Locker", Exec: script("install-audio-assault-amplocker.sh")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall Amp Locker", Exec: script("uninstall-audio-assault-amplocker.sh")},
 							},
 						},
 						{
@@ -331,8 +365,11 @@ func Build(scriptDir string) []*Category {
 								".vst3/Mix Locker.vst3",
 								".lv2/Mix Locker.lv2",
 							},
-							Actions: []Action{
+							InstallActions: []Action{
 								{Title: "Install Mix Locker", Exec: script("install-audio-assault-mixlocker.sh")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall Mix Locker", Exec: script("uninstall-audio-assault-mixlocker.sh")},
 							},
 						},
 					},
@@ -340,13 +377,13 @@ func Build(scriptDir string) []*Category {
 				{
 					ID:          "tal",
 					Name:        "TAL Effects",
-					Description: "Reserved for TAL effects that you want to group under Effects rather than Virtual Instruments.",
+					Description: "TAL Effects such as chorus, reverb etc.",
 					Packages:    []*Package{},
 				},
 				{
 					ID:          "general-effects",
 					Name:        "General Effects",
-					Description: "Additional effect collections can still be grouped by function where that is more useful than vendor.",
+					Description: "For vendors that do not have a large catelog of available effects",
 					Packages:    []*Package{},
 				},
 			},
@@ -376,8 +413,11 @@ func Build(scriptDir string) []*Category {
 								".local/bin/rtcqs",
 								".local/share/applications/rtcqs-gui.desktop",
 							},
-							Actions: []Action{
+							InstallActions: []Action{
 								{Title: "Install RTCQS", Exec: script("install-rtcqs.sh")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall RTCQS", Exec: script("uninstall-rtcqs.sh")},
 							},
 						},
 					},

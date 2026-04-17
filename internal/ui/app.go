@@ -22,16 +22,16 @@ var theme = struct {
 	Danger     tcell.Color
 	FocusMute  tcell.Color
 }{
-		Background: tcell.NewHexColor(0x181616), 
-    Panel:      tcell.NewHexColor(0x1d1c19), 
-    Accent:     tcell.NewHexColor(0x8ba4b0), 
-    AccentWarm: tcell.NewHexColor(0xff9e3b), 
-    Text:       tcell.NewHexColor(0xc5c9c5), 
-    Muted:      tcell.NewHexColor(0x7a8382), 
-    Success:    tcell.NewHexColor(0x8a9a7b), 
-    Warning:    tcell.NewHexColor(0xe46876), 
-    Danger:     tcell.NewHexColor(0xc4746e), 
-    FocusMute:  tcell.NewHexColor(0x2d3139), 
+	Background: tcell.NewHexColor(0x181616),
+	Panel:      tcell.NewHexColor(0x1d1c19),
+	Accent:     tcell.NewHexColor(0x8ba4b0),
+	AccentWarm: tcell.NewHexColor(0xff9e3b),
+	Text:       tcell.NewHexColor(0xc5c9c5),
+	Muted:      tcell.NewHexColor(0x7a8382),
+	Success:    tcell.NewHexColor(0x8a9a7b),
+	Warning:    tcell.NewHexColor(0xe46876),
+	Danger:     tcell.NewHexColor(0xc4746e),
+	FocusMute:  tcell.NewHexColor(0x2d3139),
 }
 
 const (
@@ -166,6 +166,22 @@ func (a *App) buildLayout() {
 		if row > 0 {
 			a.toggleSelected(row - 1)
 		}
+	})
+	a.packageTable.SetMouseCapture(func(action tview.MouseAction, event *tcell.EventMouse) (tview.MouseAction, *tcell.EventMouse) {
+		if action != tview.MouseLeftDoubleClick {
+			return action, event
+		}
+
+		x, y := event.Position()
+		row, _ := a.packageTable.CellAt(x, y)
+		if row > 0 {
+			a.setActivePane(paneQueue)
+			a.packageTable.Select(row, 0)
+			a.toggleSelected(row - 1)
+			return tview.MouseConsumed, nil
+		}
+
+		return action, event
 	})
 	a.packageTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		a.activePane = paneQueue
@@ -334,16 +350,16 @@ func (a *App) refreshPackageTable() {
 		mark := "[ ]"
 		markColor := theme.Muted
 		if a.selected[pkg.ID] {
-			mark = "[X]"
-			markColor = theme.Success
+			mark = "[x]"
+			markColor = theme.Accent
 		}
 
-		statusText := "Ready"
-		statusColor := theme.Warning
+		statusText := "Available"
+		statusColor := theme.Accent
 		if state.Installed {
 			statusText = "Installed"
 			statusColor = theme.Success
-		} else if !state.Available {
+		} else if !state.InstallAvailable {
 			statusText = "Unavailable"
 			statusColor = theme.Danger
 		}
@@ -405,9 +421,11 @@ func (a *App) refreshDetails() {
 	builder.WriteString(fmt.Sprintf("[#f59e0b]Category[-]  %s / %s\n", a.currentCategory.Name, a.currentSubcat.Name))
 
 	stateLine := "[#fbbf24]Ready to install[-]"
-	if state.Installed {
-		stateLine = "[#4ade80]Already installed[-]"
-	} else if !state.Available {
+	if state.Installed && state.UninstallAvailable {
+		stateLine = "[#4ade80]Installed; selecting will queue uninstall[-]"
+	} else if state.Installed {
+		stateLine = "[#4ade80]Installed[-]"
+	} else if !state.InstallAvailable {
 		stateLine = "[#fb7185]Not currently installable from the TUI[-]"
 	}
 	builder.WriteString(fmt.Sprintf("[#f59e0b]Status[-]    %s\n", stateLine))
@@ -424,7 +442,10 @@ func (a *App) refreshDetails() {
 	}
 
 	builder.WriteString("\n[#f59e0b]Actions[-]\n")
-	for _, action := range pkg.Actions {
+	for _, action := range pkg.InstallActions {
+		builder.WriteString(fmt.Sprintf(" • %s\n", action.Title))
+	}
+	for _, action := range pkg.UninstallActions {
 		builder.WriteString(fmt.Sprintf(" • %s\n", action.Title))
 	}
 
@@ -440,7 +461,7 @@ func (a *App) updateStatus() {
 	}
 
 	a.status.SetText(fmt.Sprintf(
-		"[#e5eefb]%s[-]    [#94a3b8]%d selected[-]    [#94a3b8]%d packages in catalog[-]\n[#94a3b8]Tab switch panels  Space toggle  R review/install  C clear  Q quit[-]",
+		"[#e5eefb]%s[-]    [#94a3b8]%d selected[-]    [#94a3b8]%d packages in catalog[-]\n[#94a3b8]Tab switch panels  Space select  R install/uninstall  C clear  Q quit[-]",
 		location,
 		selectedCount,
 		totalCount,
@@ -454,8 +475,8 @@ func (a *App) toggleSelected(index int) {
 
 	pkg := a.currentSubcat.Packages[index]
 	state := a.states[pkg.ID]
-	if !state.Available {
-		message := fmt.Sprintf("%s is listed in the catalog, but it is not currently installable from the TUI.", pkg.Name)
+	if !a.canQueue(state) {
+		message := fmt.Sprintf("%s is listed in the catalog, but it is not currently actionable from the TUI.", pkg.Name)
 		if pkg.AvailabilityNote != "" {
 			message = pkg.AvailabilityNote
 		}
@@ -486,29 +507,66 @@ func (a *App) selectedPackages() []*catalog.Package {
 	return packages
 }
 
-func (a *App) reviewAndInstall() {
+func (a *App) canQueue(state installer.PackageState) bool {
+	if state.Installed {
+		return state.UninstallAvailable
+	}
+	return state.InstallAvailable
+}
+
+func (a *App) resolveJobs() ([]installer.Job, []string) {
 	selected := a.selectedPackages()
-	if len(selected) == 0 {
+	jobs := make([]installer.Job, 0, len(selected))
+	var skipped []string
+
+	for _, pkg := range selected {
+		state := a.states[pkg.ID]
+		switch {
+		case state.Installed && state.UninstallAvailable:
+			jobs = append(jobs, installer.Job{Package: pkg, Mode: installer.ModeUninstall})
+		case !state.Installed && state.InstallAvailable:
+			jobs = append(jobs, installer.Job{Package: pkg, Mode: installer.ModeInstall})
+		default:
+			skipped = append(skipped, pkg.Name)
+		}
+	}
+
+	return jobs, skipped
+}
+
+func (a *App) reviewAndInstall() {
+	jobs, skipped := a.resolveJobs()
+	if len(jobs) == 0 {
 		a.showInfoModal("Nothing selected", "Select one or more packages before starting an install run.")
 		return
 	}
 
 	var builder strings.Builder
-	builder.WriteString("Install queue:\n\n")
-	for _, pkg := range selected {
+	builder.WriteString("Queued actions:\n\n")
+	for _, job := range jobs {
 		builder.WriteString(" • ")
-		builder.WriteString(pkg.Name)
+		builder.WriteString(job.Package.Name)
+		builder.WriteString(" → ")
+		builder.WriteString(strings.ToUpper(string(job.Mode)))
 		builder.WriteByte('\n')
+	}
+	if len(skipped) > 0 {
+		builder.WriteString("\nSkipped:\n")
+		for _, name := range skipped {
+			builder.WriteString(" • ")
+			builder.WriteString(name)
+			builder.WriteByte('\n')
+		}
 	}
 	builder.WriteString("\nThe TUI will suspend while installers run so sudo prompts and download output can use the terminal directly.")
 
 	modal := tview.NewModal().
 		SetText(builder.String()).
-		AddButtons([]string{"Install", "Cancel"}).
+		AddButtons([]string{"Run", "Cancel"}).
 		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
 			a.pages.RemovePage("modal")
-			if buttonLabel == "Install" {
-				a.executeSelected(selected)
+			if buttonLabel == "Run" {
+				a.executeSelected(jobs)
 			}
 		})
 	modal.SetBackgroundColor(theme.Background)
@@ -516,11 +574,11 @@ func (a *App) reviewAndInstall() {
 	a.pages.AddPage("modal", modal, true, true)
 }
 
-func (a *App) executeSelected(packages []*catalog.Package) {
+func (a *App) executeSelected(jobs []installer.Job) {
 	var results []installer.Result
 
 	a.app.Suspend(func() {
-		results = installer.Run(packages)
+		results = installer.Run(jobs)
 	})
 
 	for _, result := range results {
@@ -544,7 +602,9 @@ func (a *App) showResults(results []installer.Result) {
 			successCount++
 			builder.WriteString(" • ")
 			builder.WriteString(result.PackageName)
-			builder.WriteString(": installed\n")
+			builder.WriteString(": ")
+			builder.WriteString(string(result.Mode))
+			builder.WriteString(" complete\n")
 			continue
 		}
 
@@ -556,9 +616,9 @@ func (a *App) showResults(results []installer.Result) {
 		builder.WriteByte('\n')
 	}
 
-	title := "Install summary"
+	title := "Run summary"
 	if failureCount == 0 {
-		title = "Install complete"
+		title = "Run complete"
 	}
 
 	a.showInfoModal(

@@ -11,21 +11,33 @@ import (
 )
 
 type PackageState struct {
-	Installed bool
-	Available bool
+	Installed          bool
+	InstallAvailable   bool
+	UninstallAvailable bool
+}
+
+type Mode string
+
+const (
+	ModeInstall   Mode = "install"
+	ModeUninstall Mode = "uninstall"
+)
+
+type Job struct {
+	Package *catalog.Package
+	Mode    Mode
 }
 
 type Result struct {
 	PackageID   string
 	PackageName string
+	Mode        Mode
 	Success     bool
 	Error       error
 }
 
 func Detect(pkg *catalog.Package) PackageState {
-	state := PackageState{
-		Available: len(pkg.Actions) > 0,
-	}
+	state := PackageState{}
 
 	for _, marker := range pkg.InstalledMarkers {
 		if markerExists(marker) {
@@ -34,42 +46,30 @@ func Detect(pkg *catalog.Package) PackageState {
 		}
 	}
 
-	for _, action := range pkg.Actions {
-		if len(action.Exec) == 0 {
-			state.Available = false
-			return state
-		}
-
-		if !commandExists(action.Exec[0]) {
-			state.Available = false
-			return state
-		}
-
-		for _, arg := range action.Exec[1:] {
-			if looksLikePath(arg) {
-				if _, err := os.Stat(arg); err != nil {
-					state.Available = false
-					return state
-				}
-			}
-		}
-	}
+	state.InstallAvailable = actionsAvailable(pkg.InstallActions)
+	state.UninstallAvailable = actionsAvailable(pkg.UninstallActions)
 
 	return state
 }
 
-func Run(packages []*catalog.Package) []Result {
-	results := make([]Result, 0, len(packages))
+func Run(jobs []Job) []Result {
+	results := make([]Result, 0, len(jobs))
 
 	fmt.Println("Caracal Software Installer")
 	fmt.Println("==========================")
 	fmt.Println()
 
-	for index, pkg := range packages {
-		fmt.Printf("[%d/%d] %s\n", index+1, len(packages), pkg.Name)
+	for index, job := range jobs {
+		pkg := job.Package
+		fmt.Printf("[%d/%d] %s (%s)\n", index+1, len(jobs), pkg.Name, strings.ToUpper(string(job.Mode)))
+
+		actions := pkg.InstallActions
+		if job.Mode == ModeUninstall {
+			actions = pkg.UninstallActions
+		}
 
 		var runErr error
-		for _, action := range pkg.Actions {
+		for _, action := range actions {
 			fmt.Printf("  -> %s\n", action.Title)
 			if err := runAction(action); err != nil {
 				runErr = err
@@ -80,6 +80,7 @@ func Run(packages []*catalog.Package) []Result {
 		result := Result{
 			PackageID:   pkg.ID,
 			PackageName: pkg.Name,
+			Mode:        job.Mode,
 			Success:     runErr == nil,
 			Error:       runErr,
 		}
@@ -108,6 +109,32 @@ func runAction(action catalog.Action) error {
 	}
 
 	return nil
+}
+
+func actionsAvailable(actions []catalog.Action) bool {
+	if len(actions) == 0 {
+		return false
+	}
+
+	for _, action := range actions {
+		if len(action.Exec) == 0 {
+			return false
+		}
+
+		if !commandExists(action.Exec[0]) {
+			return false
+		}
+
+		for _, arg := range action.Exec[1:] {
+			if looksLikePath(arg) {
+				if _, err := os.Stat(arg); err != nil {
+					return false
+				}
+			}
+		}
+	}
+
+	return true
 }
 
 func markerExists(marker string) bool {
