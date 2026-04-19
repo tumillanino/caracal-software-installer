@@ -68,6 +68,28 @@ copy_bundle_dir() {
   cp -a "${source}" "${destination_root}/"
 }
 
+find_bundle_dirs() {
+  local root="$1"
+  local suffix="$2"
+
+  find "${root}" \
+    -type d \
+    -name "*.${suffix}" \
+    ! -path '*/__MACOSX/*' \
+    -print0
+}
+
+find_plugin_files() {
+  local root="$1"
+  local suffix="$2"
+
+  find "${root}" \
+    -type f \
+    -name "*.${suffix}" \
+    ! -path '*/__MACOSX/*' \
+    -print0
+}
+
 copy_plugin_file() {
   local source="$1"
   local destination_root="$2"
@@ -104,21 +126,21 @@ if has_format "clap"; then
   mkdir -p "${target_clap_dir}"
   while IFS= read -r -d '' clap_file; do
     copy_plugin_file "${clap_file}" "${target_clap_dir}"
-  done < <(find "${extract_dir}" -type f -name '*.clap' -print0)
+  done < <(find_plugin_files "${extract_dir}" "clap")
 fi
 
 if has_format "vst3"; then
   mkdir -p "${target_vst3_dir}"
   while IFS= read -r -d '' vst3_bundle; do
     copy_bundle_dir "${vst3_bundle}" "${target_vst3_dir}"
-  done < <(find "${extract_dir}" -type d -name '*.vst3' -print0)
+  done < <(find_bundle_dirs "${extract_dir}" "vst3")
 fi
 
 if has_format "lv2"; then
   mkdir -p "${target_lv2_dir}"
   while IFS= read -r -d '' lv2_bundle; do
     copy_bundle_dir "${lv2_bundle}" "${target_lv2_dir}"
-  done < <(find "${extract_dir}" -type d -name '*.lv2' -print0)
+  done < <(find_bundle_dirs "${extract_dir}" "lv2")
 fi
 
 if has_format "vst"; then

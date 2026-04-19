@@ -266,6 +266,28 @@ func Build(scriptDir string) []*Category {
 								{Title: "Uninstall Surge XT", Exec: sudoScript("uninstall-surge-xt.sh")},
 							},
 						},
+						{
+							ID:          "wavetable",
+							Name:        "Wavetable",
+							Vendor:      "FigBug",
+							Summary:     "A 2 oscillator wavetable synthesizer with flexible modulation options.",
+							Description: "Downloads the upstream Wabetable synth, extracts its payload without layering the OS image, and mirrors the relevant binaries, plugins, and desktop files into /usr/local.",
+							Notes: []string{
+								"Does not require sudo.",
+								"Uses archive extraction rather than dnf layering so it works as a post-install action on Caracal.",
+							},
+							InstalledMarkers: []string{
+								".vst/Wavetable.so",
+								".vst3/Wavetable.vst3",
+								".lv2/Wavetable.lv2",
+							},
+							InstallActions: []Action{
+								{Title: "Install Wavetable", Exec: script("install-wavetable.sh")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall Wavetable", Exec: script("uninstall-wavetable.sh")},
+							},
+						},
 					},
 				},
 				{
@@ -273,6 +295,28 @@ func Build(scriptDir string) []*Category {
 					Name:        "Samplers & Players",
 					Description: "Sample playback tools that round out the base system.",
 					Packages: []*Package{
+						{
+							ID:          "loopino",
+							Name:        "Loopino",
+							Vendor:      "brummer10",
+							Summary:     "Live looper instrument built from source as user-local CLAP and VST2 plugins.",
+							Description: "Clones the Loopino repository, initializes submodules, builds the CLAP and VST2 plugin targets from source, and installs them into the current user's plugin directories. The standalone target is intentionally skipped.",
+							Notes: []string{
+								"Does not require sudo.",
+								"Builds from source, so git, make, and a working native build toolchain are required on the target system.",
+								"Installs only CLAP and VST2, matching the current Caracal post-install preference for Loopino.",
+							},
+							InstalledMarkers: []string{
+								".clap/*Loopino*",
+								".vst/*Loopino*",
+							},
+							InstallActions: []Action{
+								{Title: "Install Loopino", Exec: script("install-loopino.sh")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall Loopino", Exec: script("uninstall-loopino.sh")},
+							},
+						},
 						{
 							ID:          "decent-sampler",
 							Name:        "Decent Sampler",
@@ -384,7 +428,28 @@ func Build(scriptDir string) []*Category {
 					ID:          "general-effects",
 					Name:        "General Effects",
 					Description: "For vendors that do not have a large catelog of available effects",
-					Packages:    []*Package{},
+					Packages: []*Package{
+						{
+							ID:          "intersect",
+							Name:        "INTERSECT",
+							Vendor:      "tucktuckg00se",
+							Summary:     "INTERSECT is a sample slicer instrument plugin.",
+							Description: "Downloads INTERSECT and installs its VST3 bundle into the current user's ~/.vst3 directory.",
+							Notes: []string{
+								"Does not require sudo.",
+								"Installed as a user-local plugin so it works cleanly on immutable systems.",
+							},
+							InstalledMarkers: []string{
+								".vst3/INTERSECT.vst3",
+							},
+							InstallActions: []Action{
+								{Title: "Install INTERSECT", Exec: script("install-intersect.sh")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall INTERSECT", Exec: script("uninstall-intersect.sh")},
+							},
+						},
+					},
 				},
 			},
 		},

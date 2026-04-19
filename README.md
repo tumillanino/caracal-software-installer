@@ -17,6 +17,7 @@
     - TAL-Noisemaker
   - Cardinal
   - Surge XT
+  - Loopino
   - Decent Sampler
 - Effects
   - Audio Assault
