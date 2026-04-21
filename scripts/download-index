@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "${script_dir}/.." && pwd)"
+index_path="${CARACAL_INSTALLER_DOWNLOAD_INDEX_PATH:-${repo_root}/data/download-index.csv}"
+
+find_helper() {
+    local candidates=()
+
+    if [[ -n "${CARACAL_INSTALLER_DOWNLOAD_INDEX_BIN:-}" ]]; then
+        candidates+=("${CARACAL_INSTALLER_DOWNLOAD_INDEX_BIN}")
+    fi
+
+    candidates+=(
+        "${repo_root}/bin/caracal-download-index"
+        "/usr/libexec/caracal-software-installer/caracal-download-index"
+        "/usr/lib/caracal-software-installer/bin/caracal-download-index"
+    )
+
+    for candidate in "${candidates[@]}"; do
+        if [[ -x "${candidate}" ]]; then
+            printf '%s\n' "${candidate}"
+            return 0
+        fi
+    done
+
+    if command -v caracal-download-index >/dev/null 2>&1; then
+        command -v caracal-download-index
+        return 0
+    fi
+
+    return 1
+}
+
+if helper_bin="$(find_helper)"; then
+    exec "${helper_bin}" --index "${index_path}" "$@"
+fi
+
+if command -v go >/dev/null 2>&1 && [[ -f "${repo_root}/go.mod" ]]; then
+    cd "${repo_root}"
+    exec go run ./cmd/caracal-download-index --index "${index_path}" "$@"
+fi
+
+echo "Could not find caracal-download-index. Build ./cmd/caracal-download-index or set CARACAL_INSTALLER_DOWNLOAD_INDEX_BIN." >&2
+exit 1

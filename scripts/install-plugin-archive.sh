@@ -16,7 +16,8 @@ data_dir_name="${6:-}"
 data_target_name="${7:-${data_dir_name}}"
 
 workdir="$(mktemp -d)"
-archive_path="${workdir}/${plugin_id}.zip"
+archive_name="$(basename "${url%%\?*}")"
+archive_path="${workdir}/${archive_name}"
 extract_dir="${workdir}/extract"
 target_vst_dir="${HOME}/.vst"
 target_vst3_dir="${HOME}/.vst3"
@@ -55,6 +56,76 @@ extract_zip() {
 
   echo "Need one of: unzip, 7z, or bsdtar to unpack ZIP archives." >&2
   exit 1
+}
+
+extract_deb() {
+  local archive="$1"
+  local destination="$2"
+  local deb_dir="${workdir}/deb"
+  local data_archive=""
+
+  mkdir -p "${destination}" "${deb_dir}"
+  if ! command -v ar >/dev/null 2>&1; then
+    echo "Need ar to unpack Debian archives." >&2
+    exit 1
+  fi
+
+  (
+    cd "${deb_dir}"
+    ar x "${archive}"
+  )
+
+  data_archive="$(find "${deb_dir}" -maxdepth 1 -type f -name 'data.tar*' | head -n 1)"
+  if [[ -z "${data_archive}" ]]; then
+    echo "Debian archive did not contain a data payload." >&2
+    exit 1
+  fi
+
+  if command -v tar >/dev/null 2>&1; then
+    tar -xf "${data_archive}" -C "${destination}"
+    return
+  fi
+
+  if command -v bsdtar >/dev/null 2>&1; then
+    bsdtar -xf "${data_archive}" -C "${destination}"
+    return
+  fi
+
+  echo "Need tar or bsdtar to unpack Debian data payloads." >&2
+  exit 1
+}
+
+extract_archive() {
+  local archive="$1"
+  local destination="$2"
+  local lower_archive
+  lower_archive="$(printf '%s' "${archive}" | tr '[:upper:]' '[:lower:]')"
+
+  case "${lower_archive}" in
+    *.zip)
+      extract_zip "${archive}" "${destination}"
+      ;;
+    *.deb)
+      extract_deb "${archive}" "${destination}"
+      ;;
+    *.tar|*.tar.gz|*.tgz|*.tar.xz|*.txz|*.tar.bz2|*.tbz2|*.tar.zst)
+      mkdir -p "${destination}"
+      if command -v tar >/dev/null 2>&1; then
+        tar -xf "${archive}" -C "${destination}"
+        return
+      fi
+      if command -v bsdtar >/dev/null 2>&1; then
+        bsdtar -xf "${archive}" -C "${destination}"
+        return
+      fi
+      echo "Need tar or bsdtar to unpack ${archive_name}." >&2
+      exit 1
+      ;;
+    *)
+      echo "Unsupported archive format for ${archive_name}." >&2
+      exit 1
+      ;;
+  esac
 }
 
 copy_bundle_dir() {
@@ -120,7 +191,7 @@ trap cleanup EXIT
 
 echo "Downloading ${display_name}..."
 curl -fL --retry 3 --retry-delay 2 -o "${archive_path}" "${url}"
-extract_zip "${archive_path}" "${extract_dir}"
+extract_archive "${archive_path}" "${extract_dir}"
 
 if has_format "clap"; then
   mkdir -p "${target_clap_dir}"

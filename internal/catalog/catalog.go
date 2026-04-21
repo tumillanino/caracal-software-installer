@@ -1,10 +1,20 @@
 package catalog
 
-import "path/filepath"
+import (
+	"fmt"
+	"path/filepath"
+
+	"github.com/caracal-os/caracal-software-installer/internal/downloadindex"
+)
 
 type Action struct {
 	Title string
 	Exec  []string
+}
+
+type Link struct {
+	Label string
+	URL   string
 }
 
 type Package struct {
@@ -14,6 +24,7 @@ type Package struct {
 	Summary          string
 	Description      string
 	Notes            []string
+	Links            []Link
 	AvailabilityNote string
 	InstalledMarkers []string
 	InstallActions   []Action
@@ -35,12 +46,66 @@ type Category struct {
 	Subcategories []*Subcategory
 }
 
-func Build(scriptDir string) []*Category {
-	script := func(name string) []string {
-		return []string{"bash", filepath.Join(scriptDir, name)}
+func Build(scriptDir string, downloadLookup map[string]downloadindex.Entry) []*Category {
+	script := func(name string, args ...string) []string {
+		exec := []string{"bash", filepath.Join(scriptDir, name)}
+		return append(exec, args...)
 	}
 	sudoScript := func(name string) []string {
 		return []string{"sudo", "bash", filepath.Join(scriptDir, name)}
+	}
+	mustEntry := func(id string) downloadindex.Entry {
+		entry, ok := downloadLookup[id]
+		if !ok {
+			panic(fmt.Sprintf("download index entry not found for package id %s", id))
+		}
+		return entry
+	}
+	trimTrailingEmpty := func(values []string) []string {
+		last := len(values) - 1
+		for last >= 0 && values[last] == "" {
+			last--
+		}
+		return values[:last+1]
+	}
+	archiveInstall := func(id string) []string {
+		entry := mustEntry(id)
+		args := trimTrailingEmpty([]string{
+			id,
+			entry["name"],
+			entry["url"],
+			entry["primary_bundle_name"],
+			entry["formats"],
+			entry["data_dir_name"],
+			entry["data_target_name"],
+		})
+		return append([]string{"bash", filepath.Join(scriptDir, "install-plugin-archive.sh")}, args...)
+	}
+	archiveUninstall := func(id string) []string {
+		entry := mustEntry(id)
+		args := trimTrailingEmpty([]string{
+			entry["primary_bundle_name"],
+			entry["formats"],
+			entry["data_target_name"],
+		})
+		return append([]string{"bash", filepath.Join(scriptDir, "uninstall-plugin-archive.sh")}, args...)
+	}
+	sourceInstall := func(id string, projectName string) []string {
+		return script("install-source-plugin.sh", id, mustEntry(id)["name"], projectName)
+	}
+	sourceUninstall := func(projectName string, displayName string) []string {
+		return script("uninstall-source-plugin.sh", projectName, displayName)
+	}
+	linkForID := func(id string) []Link {
+		entry := mustEntry(id)
+		var links []Link
+		if entry["url"] != "" {
+			links = append(links, Link{Label: "Download", URL: entry["url"]})
+		}
+		if entry["repo_url"] != "" {
+			links = append(links, Link{Label: "Source", URL: entry["repo_url"]})
+		}
+		return links
 	}
 
 	return []*Category{
@@ -65,6 +130,7 @@ func Build(scriptDir string) []*Category {
 								"Requires sudo because it writes to /opt and /usr/local.",
 								"Preserves compatibility with Caracal's existing REAPER install approach.",
 							},
+							Links: linkForID("reaper"),
 							InstalledMarkers: []string{
 								"/opt/REAPER/reaper",
 								"/usr/local/share/applications/cockos-reaper.desktop",
@@ -86,6 +152,7 @@ func Build(scriptDir string) []*Category {
 								"Requires sudo because it writes to /opt and /usr/local.",
 								"The shipped installer targets the demo build until license activation happens inside Renoise.",
 							},
+							Links: linkForID("renoise"),
 							InstalledMarkers: []string{
 								"/opt/renoise/renoise",
 								"/usr/local/share/applications/renoise.desktop",
@@ -107,6 +174,7 @@ func Build(scriptDir string) []*Category {
 								"Requires sudo because it writes to /opt and /usr/local.",
 								"Bitwig itself still requires a valid upstream license.",
 							},
+							Links: linkForID("bitwig-studio"),
 							InstalledMarkers: []string{
 								"/opt/bitwig-studio/bitwig-studio",
 								"/usr/local/share/applications/bitwig-studio.desktop",
@@ -125,7 +193,7 @@ func Build(scriptDir string) []*Category {
 		{
 			ID:          "virtual-instruments",
 			Name:        "Virtual Instruments",
-			Description: "Synths, modular environments, and sample players available as optional installs.",
+			Description: "Synths, modular environments, drums, and sample players available as optional installs.",
 			Accent:      "#f59e0b",
 			Subcategories: []*Subcategory{
 				{
@@ -143,6 +211,7 @@ func Build(scriptDir string) []*Category {
 								"Requires sudo because it writes to /opt and /usr/local.",
 								"SunVox uses a portable archive layout rather than a distro-native package.",
 							},
+							Links: linkForID("sunvox"),
 							InstalledMarkers: []string{
 								"/usr/local/bin/sunvox",
 								"/usr/local/share/applications/sunvox.desktop",
@@ -164,6 +233,7 @@ func Build(scriptDir string) []*Category {
 								"Requires sudo because it writes to /opt and /usr/local.",
 								"Distributed upstream as a portable archive with the Linux launcher inside the extracted folder.",
 							},
+							Links: linkForID("virtual-ans"),
 							InstalledMarkers: []string{
 								"/usr/local/bin/virtual-ans",
 								"/usr/local/share/applications/virtual-ans.desktop",
@@ -182,40 +252,10 @@ func Build(scriptDir string) []*Category {
 							Summary:     "Fractal drum synth desktop build currently distributed through a paid upstream post.",
 							Description: "The desktop Linux build is listed by Warmplace, but the current upstream download is a purchase-gated Boosty post rather than a direct public ZIP archive.",
 							Notes: []string{
-								"Listed here so the Warmplace section reflects the broader brand lineup.",
+								"Listed here so the Warmplace section reflects the broader lineup.",
 								"Once a stable public ZIP URL or a purchase flow is defined, this can be turned into a first-class installer entry.",
 							},
 							AvailabilityNote: "Current desktop download is purchase-gated upstream, so there is no unattended installer script yet.",
-						},
-					},
-				},
-				{
-					ID:          "tal",
-					Name:        "TAL",
-					Description: "User-local TAL plugin installs distributed as Linux ZIP archives.",
-					Packages: []*Package{
-						{
-							ID:          "tal-noisemaker",
-							Name:        "TAL-Noisemaker",
-							Vendor:      "TAL Software",
-							Summary:     "Free virtual analog synth installed from TAL's Linux ZIP archive.",
-							Description: "Downloads TAL-Noisemaker and installs the contained CLAP, VST3, and VST2 plugin payloads into the current user's ~/.clap, ~/.vst3, and ~/.vst directories. This specific archive does not currently ship an LV2 bundle.",
-							Notes: []string{
-								"Does not require sudo.",
-								"Installed as a user-local plugin set so it works cleanly on immutable systems.",
-								"Built on a reusable TAL ZIP installer so additional TAL plugins can be added with minimal metadata changes.",
-							},
-							InstalledMarkers: []string{
-								".clap/TAL-NoiseMaker.clap",
-								".vst3/TAL-NoiseMaker.vst3",
-								".vst/libTAL-NoiseMaker.so",
-							},
-							InstallActions: []Action{
-								{Title: "Install TAL-Noisemaker", Exec: script("install-tal-noisemaker.sh")},
-							},
-							UninstallActions: []Action{
-								{Title: "Uninstall TAL-Noisemaker", Exec: script("uninstall-tal-noisemaker.sh")},
-							},
 						},
 					},
 				},
@@ -234,6 +274,7 @@ func Build(scriptDir string) []*Category {
 								"Requires sudo because it writes to /usr/local/bin and /usr/local/lib64.",
 								"This replaces the previous image-baked Cardinal install path.",
 							},
+							Links: linkForID("cardinal"),
 							InstalledMarkers: []string{
 								"/usr/local/bin/Cardinal",
 								"/usr/local/lib64/vst3/Cardinal.vst3",
@@ -255,6 +296,7 @@ func Build(scriptDir string) []*Category {
 								"Requires sudo because it writes into /usr/local.",
 								"Uses archive extraction rather than dnf layering so it works as a post-install action on Caracal.",
 							},
+							Links: linkForID("surge-xt"),
 							InstalledMarkers: []string{
 								"/usr/local/bin/*surge*",
 								"/usr/local/lib64/vst3/*Surge*",
@@ -270,22 +312,91 @@ func Build(scriptDir string) []*Category {
 							ID:          "wavetable",
 							Name:        "Wavetable",
 							Vendor:      "FigBug",
-							Summary:     "A 2 oscillator wavetable synthesizer with flexible modulation options.",
-							Description: "Downloads the upstream Wabetable synth, extracts its payload without layering the OS image, and mirrors the relevant binaries, plugins, and desktop files into /usr/local.",
+							Summary:     "Two-oscillator wavetable synth with VST, VST3, and LV2 targets.",
+							Description: "Downloads the upstream Linux archive and installs the contained VST2, VST3, and LV2 payloads into the current user's plugin directories.",
 							Notes: []string{
 								"Does not require sudo.",
-								"Uses archive extraction rather than dnf layering so it works as a post-install action on Caracal.",
+								"Installed as a user-local plugin set so it works cleanly on immutable systems.",
 							},
+							Links: linkForID("wavetable"),
 							InstalledMarkers: []string{
 								".vst/Wavetable.so",
 								".vst3/Wavetable.vst3",
 								".lv2/Wavetable.lv2",
 							},
 							InstallActions: []Action{
-								{Title: "Install Wavetable", Exec: script("install-wavetable.sh")},
+								{Title: "Install Wavetable", Exec: archiveInstall("wavetable")},
 							},
 							UninstallActions: []Action{
-								{Title: "Uninstall Wavetable", Exec: script("uninstall-wavetable.sh")},
+								{Title: "Uninstall Wavetable", Exec: archiveUninstall("wavetable")},
+							},
+						},
+						{
+							ID:          "ob-xf",
+							Name:        "OB-Xf",
+							Vendor:      "Surge Synth Team",
+							Summary:     "Open-source OB-style synth distributed as Linux plugin bundles.",
+							Description: "Downloads the upstream Linux archive and installs the contained VST3 and LV2 bundles into the current user's plugin directories.",
+							Notes: []string{
+								"Does not require sudo.",
+								"Installed as a user-local plugin so it works cleanly on immutable systems.",
+							},
+							Links: linkForID("ob-xf"),
+							InstalledMarkers: []string{
+								".vst3/OB-Xf.vst3",
+								".lv2/OB-Xf.lv2",
+							},
+							InstallActions: []Action{
+								{Title: "Install OB-Xf", Exec: archiveInstall("ob-xf")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall OB-Xf", Exec: archiveUninstall("ob-xf")},
+							},
+						},
+						{
+							ID:          "odin2",
+							Name:        "Odin2",
+							Vendor:      "TheWaveWarden",
+							Summary:     "Hybrid synth distributed as a Linux archive with CLAP and VST3 targets.",
+							Description: "Downloads the upstream Linux archive and installs the contained CLAP and VST3 bundles into the current user's plugin directories.",
+							Notes: []string{
+								"Does not require sudo.",
+								"Installed as a user-local plugin so it works cleanly on immutable systems.",
+							},
+							Links: linkForID("odin2"),
+							InstalledMarkers: []string{
+								".clap/Odin2.clap",
+								".vst3/Odin2.vst3",
+							},
+							InstallActions: []Action{
+								{Title: "Install Odin2", Exec: archiveInstall("odin2")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall Odin2", Exec: archiveUninstall("odin2")},
+							},
+						},
+						{
+							ID:          "tal-noisemaker",
+							Name:        "TAL-Noisemaker",
+							Vendor:      "TAL Software",
+							Summary:     "Free virtual analog synth installed from TAL's Linux archive.",
+							Description: "Downloads TAL-Noisemaker and installs the contained CLAP, VST3, VST2, and LV2 payloads into the current user's plugin directories.",
+							Notes: []string{
+								"Does not require sudo.",
+								"Installed as a user-local plugin set so it works cleanly on immutable systems.",
+							},
+							Links: linkForID("tal-noisemaker"),
+							InstalledMarkers: []string{
+								".clap/TAL-NoiseMaker.clap",
+								".vst3/TAL-NoiseMaker.vst3",
+								".vst/libTAL-NoiseMaker.so",
+								".lv2/TAL-NoiseMaker.lv2",
+							},
+							InstallActions: []Action{
+								{Title: "Install TAL-Noisemaker", Exec: archiveInstall("tal-noisemaker")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall TAL-Noisemaker", Exec: archiveUninstall("tal-noisemaker")},
 							},
 						},
 					},
@@ -306,6 +417,7 @@ func Build(scriptDir string) []*Category {
 								"Builds from source, so git, make, and a working native build toolchain are required on the target system.",
 								"Installs only CLAP and VST2, matching the current Caracal post-install preference for Loopino.",
 							},
+							Links: linkForID("loopino"),
 							InstalledMarkers: []string{
 								".clap/*Loopino*",
 								".vst/*Loopino*",
@@ -327,6 +439,7 @@ func Build(scriptDir string) []*Category {
 								"Requires sudo because it writes into /usr/local.",
 								"This replaces the previous image-baked Decent Sampler install path.",
 							},
+							Links: linkForID("decent-sampler"),
 							InstalledMarkers: []string{
 								"/usr/local/bin/DecentSampler",
 								"/usr/local/lib64/vst3/DecentSampler.vst3",
@@ -340,113 +453,341 @@ func Build(scriptDir string) []*Category {
 						},
 					},
 				},
-			},
-		},
-		{
-			ID:          "effects",
-			Name:        "Effects",
-			Description: "Optional processor installs grouped by vendor as the catalog grows.",
-			Accent:      "#34d399",
-			Subcategories: []*Subcategory{
 				{
-					ID:          "audio-assault",
-					Name:        "Audio Assault",
-					Description: "User-local VST3 and LV2 installs from Audio Assault's Linux plugin archives.",
+					ID:          "rncbc-instruments",
+					Name:        "rncbc Instruments",
+					Description: "Classic Linux instrument plugins built from source into the current user's home directory.",
 					Packages: []*Package{
 						{
-							ID:          "audio-assault-drum-locker",
-							Name:        "Drum Locker",
-							Vendor:      "Audio Assault",
-							Summary:     "Drum and groove production plugin installed from the official Linux archive.",
-							Description: "Downloads Drum Locker and installs its VST3 and LV2 bundles into the current user's ~/.vst3 and ~/.lv2 directories.",
+							ID:          "synthv1",
+							Name:        "Synthv1",
+							Vendor:      "rncbc",
+							Summary:     "Subtractive synth built from source into ~/.local.",
+							Description: "Downloads the current Synthv1 source archive, builds it locally, and installs its binary and plugin bundles into the current user's ~/.local tree.",
 							Notes: []string{
 								"Does not require sudo.",
-								"Installed as a user-local plugin so it works cleanly on immutable systems.",
+								"Builds from source, so make and the required development libraries must already be available.",
 							},
+							Links: linkForID("synthv1"),
 							InstalledMarkers: []string{
-								".vst3/Drum Locker.vst3",
-								".lv2/Drum Locker.lv2",
+								".local/lib/lv2/synthv1.lv2",
+								".local/bin/synthv1",
 							},
 							InstallActions: []Action{
-								{Title: "Install Drum Locker", Exec: script("install-audio-assault-drumlocker.sh")},
+								{Title: "Install Synthv1", Exec: sourceInstall("synthv1", "synthv1")},
 							},
 							UninstallActions: []Action{
-								{Title: "Uninstall Drum Locker", Exec: script("uninstall-audio-assault-drumlocker.sh")},
+								{Title: "Uninstall Synthv1", Exec: sourceUninstall("synthv1", "Synthv1")},
 							},
 						},
 						{
-							ID:          "audio-assault-amp-locker",
-							Name:        "Amp Locker",
-							Vendor:      "Audio Assault",
-							Summary:     "Amp sim platform installed from the official Linux archive.",
-							Description: "Downloads Amp Locker and installs its VST3 and LV2 bundles into the current user's ~/.vst3 and ~/.lv2 directories.",
+							ID:          "samplv1",
+							Name:        "Samplv1",
+							Vendor:      "rncbc",
+							Summary:     "Sample-based instrument built from source into ~/.local.",
+							Description: "Downloads the current Samplv1 source archive, builds it locally, and installs its binary and plugin bundles into the current user's ~/.local tree.",
 							Notes: []string{
 								"Does not require sudo.",
-								"Installed as a user-local plugin so it works cleanly on immutable systems.",
+								"Builds from source, so make and the required development libraries must already be available.",
 							},
+							Links: linkForID("samplv1"),
 							InstalledMarkers: []string{
-								".vst3/Amp Locker.vst3",
-								".lv2/Amp Locker.lv2",
+								".local/lib/lv2/samplv1.lv2",
+								".local/bin/samplv1",
 							},
 							InstallActions: []Action{
-								{Title: "Install Amp Locker", Exec: script("install-audio-assault-amplocker.sh")},
+								{Title: "Install Samplv1", Exec: sourceInstall("samplv1", "samplv1")},
 							},
 							UninstallActions: []Action{
-								{Title: "Uninstall Amp Locker", Exec: script("uninstall-audio-assault-amplocker.sh")},
+								{Title: "Uninstall Samplv1", Exec: sourceUninstall("samplv1", "Samplv1")},
 							},
 						},
 						{
-							ID:          "audio-assault-mix-locker",
-							Name:        "Mix Locker",
-							Vendor:      "Audio Assault",
-							Summary:     "Channel-strip and mix processing platform installed from the official Linux archive.",
-							Description: "Downloads Mix Locker and installs its VST3 and LV2 bundles into the current user's ~/.vst3 and ~/.lv2 directories.",
+							ID:          "padhv1",
+							Name:        "Padhv1",
+							Vendor:      "rncbc",
+							Summary:     "Pad-oriented synth built from source into ~/.local.",
+							Description: "Downloads the current Padhv1 source archive, builds it locally, and installs its binary and plugin bundles into the current user's ~/.local tree.",
 							Notes: []string{
 								"Does not require sudo.",
-								"Installed as a user-local plugin so it works cleanly on immutable systems.",
+								"Builds from source, so make and the required development libraries must already be available.",
 							},
+							Links: linkForID("padhv1"),
 							InstalledMarkers: []string{
-								".vst3/Mix Locker.vst3",
-								".lv2/Mix Locker.lv2",
+								".local/lib/lv2/padhv1.lv2",
+								".local/bin/padhv1",
 							},
 							InstallActions: []Action{
-								{Title: "Install Mix Locker", Exec: script("install-audio-assault-mixlocker.sh")},
+								{Title: "Install Padhv1", Exec: sourceInstall("padhv1", "padhv1")},
 							},
 							UninstallActions: []Action{
-								{Title: "Uninstall Mix Locker", Exec: script("uninstall-audio-assault-mixlocker.sh")},
+								{Title: "Uninstall Padhv1", Exec: sourceUninstall("padhv1", "Padhv1")},
 							},
 						},
 					},
 				},
 				{
-					ID:          "tal",
-					Name:        "TAL Effects",
-					Description: "TAL Effects such as chorus, reverb etc.",
-					Packages:    []*Package{},
+					ID:          "drums-and-percussion",
+					Name:        "Drums & Percussion",
+					Description: "Drum machines, drum instruments, and groove-oriented tools.",
+					Packages: []*Package{
+						{
+							ID:          "jdrummer",
+							Name:        "jDrummer",
+							Vendor:      "jmantra",
+							Summary:     "Drum instrument distributed as a Linux VST3 archive.",
+							Description: "Downloads the upstream jDrummer Linux archive and installs its VST3 bundle into the current user's plugin directories.",
+							Notes: []string{
+								"Does not require sudo.",
+								"Installed as a user-local plugin so it works cleanly on immutable systems.",
+							},
+							Links: linkForID("jdrummer"),
+							InstalledMarkers: []string{
+								".vst3/jdrummer.vst3",
+							},
+							InstallActions: []Action{
+								{Title: "Install jDrummer", Exec: archiveInstall("jdrummer")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall jDrummer", Exec: archiveUninstall("jdrummer")},
+							},
+						},
+						{
+							ID:          "drumkv1",
+							Name:        "Drumkv1",
+							Vendor:      "rncbc",
+							Summary:     "Drum sampler instrument built from source into ~/.local.",
+							Description: "Downloads the current Drumkv1 source archive, builds it locally, and installs its binary and plugin bundles into the current user's ~/.local tree.",
+							Notes: []string{
+								"Does not require sudo.",
+								"Builds from source, so make and the required development libraries must already be available.",
+							},
+							Links: linkForID("drumkv1"),
+							InstalledMarkers: []string{
+								".local/lib/lv2/drumkv1.lv2",
+								".local/bin/drumkv1",
+							},
+							InstallActions: []Action{
+								{Title: "Install Drumkv1", Exec: sourceInstall("drumkv1", "drumkv1")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall Drumkv1", Exec: sourceUninstall("drumkv1", "Drumkv1")},
+							},
+						},
+						{
+							ID:          "drum-locker",
+							Name:        "Drum Locker",
+							Vendor:      "Audio Assault",
+							Summary:     "Drum and groove production plugin installed from the official Linux archive.",
+							Description: "Downloads Drum Locker and installs its VST3 and LV2 bundles plus its Audio Assault data pack into the current user's home directory.",
+							Notes: []string{
+								"Does not require sudo.",
+								"Installed as a user-local plugin so it works cleanly on immutable systems.",
+							},
+							Links: linkForID("drum-locker"),
+							InstalledMarkers: []string{
+								".vst3/Drum Locker.vst3",
+								".lv2/Drum Locker.lv2",
+								"Audio Assault/PluginData/Audio Assault/DrumLockerData",
+							},
+							InstallActions: []Action{
+								{Title: "Install Drum Locker", Exec: archiveInstall("drum-locker")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall Drum Locker", Exec: archiveUninstall("drum-locker")},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			ID:          "effects",
+			Name:        "Effects",
+			Description: "Optional processor installs grouped by what they do instead of by brand.",
+			Accent:      "#34d399",
+			Subcategories: []*Subcategory{
+				{
+					ID:          "amp-and-guitar",
+					Name:        "Amp & Guitar",
+					Description: "Amp sims, pedalboards, and guitar-focused processors.",
+					Packages: []*Package{
+						{
+							ID:          "amp-locker",
+							Name:        "Amp Locker",
+							Vendor:      "Audio Assault",
+							Summary:     "Amp sim platform installed from the official Linux archive.",
+							Description: "Downloads Amp Locker and installs its VST3 and LV2 bundles plus its Audio Assault data pack into the current user's home directory.",
+							Notes: []string{
+								"Does not require sudo.",
+								"Installed as a user-local plugin so it works cleanly on immutable systems.",
+							},
+							Links: linkForID("amp-locker"),
+							InstalledMarkers: []string{
+								".vst3/Amp Locker.vst3",
+								".lv2/Amp Locker.lv2",
+								"Audio Assault/PluginData/Audio Assault/AmpLockerData",
+							},
+							InstallActions: []Action{
+								{Title: "Install Amp Locker", Exec: archiveInstall("amp-locker")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall Amp Locker", Exec: archiveUninstall("amp-locker")},
+							},
+						},
+						{
+							ID:          "byod",
+							Name:        "BYOD",
+							Vendor:      "Chowdhury DSP",
+							Summary:     "Modular pedalboard and amp chain plugin distributed as a Linux archive.",
+							Description: "Downloads the upstream Linux package and installs the contained CLAP, VST3, and LV2 bundles into the current user's plugin directories.",
+							Notes: []string{
+								"Does not require sudo.",
+								"Installed as a user-local plugin so it works cleanly on immutable systems.",
+							},
+							Links: linkForID("byod"),
+							InstalledMarkers: []string{
+								".clap/BYOD.clap",
+								".vst3/BYOD.vst3",
+								".lv2/BYOD.lv2",
+							},
+							InstallActions: []Action{
+								{Title: "Install BYOD", Exec: archiveInstall("byod")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall BYOD", Exec: archiveUninstall("byod")},
+							},
+						},
+						{
+							ID:          "neural-amp-model",
+							Name:        "Neural Amp Modeler",
+							Vendor:      "Mike Oliphant",
+							Summary:     "Neural-amp-model LV2 build distributed as a Linux archive.",
+							Description: "Downloads the upstream Linux archive and installs the contained LV2 bundle into the current user's plugin directories.",
+							Notes: []string{
+								"Does not require sudo.",
+								"The archive bundle naming is inconsistent upstream, so uninstall uses a safe wildcard cleanup path.",
+							},
+							Links: linkForID("neural-amp-model"),
+							InstalledMarkers: []string{
+								".lv2/neural_amp_modeler.lv2",
+							},
+							InstallActions: []Action{
+								{Title: "Install Neural Amp Modeler", Exec: archiveInstall("neural-amp-model")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall Neural Amp Modeler", Exec: script("uninstall-neural-amp-model.sh")},
+							},
+						},
+						{
+							ID:          "aida-x",
+							Name:        "AIDA-X",
+							Vendor:      "AidaDSP",
+							Summary:     "Amp capture and guitar processing plugin distributed as a Linux archive.",
+							Description: "Downloads the upstream Linux archive and installs the contained CLAP, VST3, and LV2 bundles into the current user's plugin directories.",
+							Notes: []string{
+								"Does not require sudo.",
+								"Installed as a user-local plugin so it works cleanly on immutable systems.",
+							},
+							Links: linkForID("aida-x"),
+							InstalledMarkers: []string{
+								".clap/AIDA-X.clap",
+								".vst3/AIDA-X.vst3",
+								".lv2/AIDA-X.lv2",
+							},
+							InstallActions: []Action{
+								{Title: "Install AIDA-X", Exec: archiveInstall("aida-x")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall AIDA-X", Exec: archiveUninstall("aida-x")},
+							},
+						},
+					},
 				},
 				{
-					ID:          "general-effects",
-					Name:        "General Effects",
-					Description: "For vendors that do not have a large catelog of available effects",
+					ID:          "mixing-and-channel-strip",
+					Name:        "Mixing & Channel Strip",
+					Description: "Mix-focused processors and channel-strip style tools.",
+					Packages: []*Package{
+						{
+							ID:          "mix-locker",
+							Name:        "Mix Locker",
+							Vendor:      "Audio Assault",
+							Summary:     "Channel-strip and mix processing platform installed from the official Linux archive.",
+							Description: "Downloads Mix Locker and installs its VST3 and LV2 bundles plus its Audio Assault data pack into the current user's home directory.",
+							Notes: []string{
+								"Does not require sudo.",
+								"Installed as a user-local plugin so it works cleanly on immutable systems.",
+							},
+							Links: linkForID("mix-locker"),
+							InstalledMarkers: []string{
+								".vst3/Mix Locker.vst3",
+								".lv2/Mix Locker.lv2",
+								"Audio Assault/PluginData/Audio Assault/MixLockerData",
+							},
+							InstallActions: []Action{
+								{Title: "Install Mix Locker", Exec: archiveInstall("mix-locker")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall Mix Locker", Exec: archiveUninstall("mix-locker")},
+							},
+						},
+					},
+				},
+				{
+					ID:          "reverb-and-spatial",
+					Name:        "Reverb & Spatial",
+					Description: "Spatial processors and reverb suites.",
+					Packages: []*Package{
+						{
+							ID:          "dragonfly",
+							Name:        "Dragonfly Reverb",
+							Vendor:      "Michael Willis",
+							Summary:     "Open-source reverb suite distributed as Linux plugin bundles.",
+							Description: "Downloads the upstream Linux archive and installs the contained CLAP, VST3, and LV2 bundles into the current user's plugin directories.",
+							Notes: []string{
+								"Does not require sudo.",
+								"The suite ships multiple Dragonfly bundles, so uninstall uses wildcard cleanup across the supported plugin directories.",
+							},
+							Links: linkForID("dragonfly"),
+							InstalledMarkers: []string{
+								".clap/Dragonfly*.clap",
+								".vst3/Dragonfly*.vst3",
+								".lv2/Dragonfly*.lv2",
+							},
+							InstallActions: []Action{
+								{Title: "Install Dragonfly Reverb", Exec: archiveInstall("dragonfly")},
+							},
+							UninstallActions: []Action{
+								{Title: "Uninstall Dragonfly Reverb", Exec: script("uninstall-dragonfly.sh")},
+							},
+						},
+					},
+				},
+				{
+					ID:          "creative-and-utility",
+					Name:        "Creative & Utility",
+					Description: "Sound-design tools, utilities, and unusual processors.",
 					Packages: []*Package{
 						{
 							ID:          "intersect",
 							Name:        "INTERSECT",
 							Vendor:      "tucktuckg00se",
-							Summary:     "INTERSECT is a sample slicer instrument plugin.",
-							Description: "Downloads INTERSECT and installs its VST3 bundle into the current user's ~/.vst3 directory.",
+							Summary:     "Sample slicer instrument packaged as a VST3 archive.",
+							Description: "Downloads INTERSECT and installs its VST3 bundle into the current user's plugin directories.",
 							Notes: []string{
 								"Does not require sudo.",
 								"Installed as a user-local plugin so it works cleanly on immutable systems.",
 							},
+							Links: linkForID("intersect"),
 							InstalledMarkers: []string{
 								".vst3/INTERSECT.vst3",
 							},
 							InstallActions: []Action{
-								{Title: "Install INTERSECT", Exec: script("install-intersect.sh")},
+								{Title: "Install INTERSECT", Exec: archiveInstall("intersect")},
 							},
 							UninstallActions: []Action{
-								{Title: "Uninstall INTERSECT", Exec: script("uninstall-intersect.sh")},
+								{Title: "Uninstall INTERSECT", Exec: archiveUninstall("intersect")},
 							},
 						},
 					},
@@ -474,6 +815,7 @@ func Build(scriptDir string) []*Category {
 								"Does not require sudo.",
 								"Installs into the current user's home directory.",
 							},
+							Links: linkForID("rtcqs"),
 							InstalledMarkers: []string{
 								".local/bin/rtcqs",
 								".local/share/applications/rtcqs-gui.desktop",

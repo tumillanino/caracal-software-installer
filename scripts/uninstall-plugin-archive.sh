@@ -30,7 +30,7 @@ if has_format "vst"; then
 fi
 
 if [[ -n "${data_target_name}" ]]; then
-    rm -rf "${HOME}/Audio Assault/PluginData/AudioAssault/${data_target_name}"
+    rm -rf "${HOME}/Audio Assault/PluginData/Audio Assault/${data_target_name}"
 fi
 
 echo "${primary_bundle_name} removed."
