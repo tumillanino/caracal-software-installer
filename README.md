@@ -9,26 +9,33 @@
   - Renoise
   - Bitwig Studio
 - Virtual Instruments
-  - Warmplace
-    - SunVox
-    - Virtual ANS
-    - Fractal Bits (cataloged; upstream desktop download is purchase-gated)
-  - TAL
-    - TAL-Noisemaker
-  - Cardinal
-  - Surge XT
-  - Loopino
-  - Decent Sampler
+  - Warmplace: SunVox, Virtual ANS, Fractal Bits
+  - Open Synths: Cardinal, Surge XT, Wavetable, OB-Xf, Odin2, TAL-Noisemaker
+  - Samplers & Players: Loopino, Decent Sampler
+  - rncbc Instruments: Synthv1, Samplv1, Padhv1
+  - Drums & Percussion: jDrummer, Drumkv1, Drum Locker
 - Effects
-  - Audio Assault
-    - Drum Locker
-    - Amp Locker
-    - Mix Locker
-  - TAL effects section placeholder
+  - Amp & Guitar: Amp Locker, BYOD, Neural Amp Modeler, AIDA-X
+  - Mixing & Channel Strip: Mix Locker
+  - Reverb & Spatial: Dragonfly Reverb
+  - Creative & Utility: INTERSECT
 - Utilities
   - RTCQS
 
-The UI is catalog-driven, so adding more packages later is mostly a matter of dropping in scripts and extending the metadata in `internal/catalog`.
+The UI is catalog-driven, and download URLs plus related archive metadata now live in `data/download-index.csv`. The catalog and helper scripts resolve package metadata from that index so link updates stay spreadsheet-friendly.
+
+`catalog-links.csv` is generated from the same catalog metadata and can be refreshed with:
+
+```bash
+env GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache go run ./cmd/export-catalog-links > catalog-links.csv
+```
+
+The download index can be validated from a repo checkout with:
+
+```bash
+scripts/download-index validate
+scripts/download-index validate --check-urls
+```
 
 ## Development
 

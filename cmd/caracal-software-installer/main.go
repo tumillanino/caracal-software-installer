@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/caracal-os/caracal-software-installer/internal/catalog"
+	"github.com/caracal-os/caracal-software-installer/internal/downloadindex"
 	"github.com/caracal-os/caracal-software-installer/internal/ui"
 )
 
@@ -17,9 +18,19 @@ func main() {
 		log.Fatal(err)
 	}
 
+	downloadIndexPath, err := resolveDownloadIndexPath(scriptDir)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	downloadLookup, err := downloadindex.Load(downloadIndexPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	logo := resolveLogo()
 
-	app := ui.New(catalog.Build(scriptDir), logo)
+	app := ui.New(catalog.Build(scriptDir, downloadLookup), logo)
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
 	}
@@ -30,9 +41,7 @@ func resolveScriptDir() (string, error) {
 		return envDir, nil
 	}
 
-	candidates := []string{
-		"/usr/lib/caracal-software-installer/scripts",
-	}
+	var candidates []string
 
 	if wd, err := os.Getwd(); err == nil {
 		candidates = append(candidates, candidateScriptDirs(wd)...)
@@ -41,6 +50,8 @@ func resolveScriptDir() (string, error) {
 	if exe, err := os.Executable(); err == nil {
 		candidates = append(candidates, candidateScriptDirs(filepath.Dir(exe))...)
 	}
+
+	candidates = append(candidates, "/usr/lib/caracal-software-installer/scripts")
 
 	seen := make(map[string]struct{})
 	for _, dir := range candidates {
@@ -96,9 +107,7 @@ func resolveLogo() string {
 		}
 	}
 
-	candidates := []string{
-		"/usr/share/caracal-software-installer/logo.txt",
-	}
+	candidates := []string{}
 
 	if wd, err := os.Getwd(); err == nil {
 		candidates = append(candidates, candidateFiles(wd, "logo.txt")...)
@@ -107,6 +116,8 @@ func resolveLogo() string {
 	if exe, err := os.Executable(); err == nil {
 		candidates = append(candidates, candidateFiles(filepath.Dir(exe), "logo.txt")...)
 	}
+
+	candidates = append(candidates, "/usr/share/caracal-software-installer/logo.txt")
 
 	seen := make(map[string]struct{})
 	for _, path := range candidates {
@@ -129,6 +140,47 @@ func resolveLogo() string {
 	return ""
 }
 
+func resolveDownloadIndexPath(scriptDir string) (string, error) {
+	if envPath := os.Getenv("CARACAL_INSTALLER_DOWNLOAD_INDEX_PATH"); envPath != "" {
+		if _, err := os.Stat(envPath); err == nil {
+			return envPath, nil
+		}
+	}
+
+	candidates := []string{
+		filepath.Join(filepath.Dir(scriptDir), "data", "download-index.csv"),
+	}
+
+	if wd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, candidateRelativePaths(wd, filepath.Join("data", "download-index.csv"))...)
+	}
+
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, candidateRelativePaths(filepath.Dir(exe), filepath.Join("data", "download-index.csv"))...)
+	}
+
+	candidates = append(candidates, "/usr/lib/caracal-software-installer/data/download-index.csv")
+
+	seen := make(map[string]struct{})
+	for _, path := range candidates {
+		if path == "" {
+			continue
+		}
+
+		clean := filepath.Clean(path)
+		if _, ok := seen[clean]; ok {
+			continue
+		}
+		seen[clean] = struct{}{}
+
+		if _, err := os.Stat(clean); err == nil {
+			return clean, nil
+		}
+	}
+
+	return "", fmt.Errorf("could not find download index; checked CARACAL_INSTALLER_DOWNLOAD_INDEX_PATH, /usr/lib/caracal-software-installer/data/download-index.csv, and repo-local data directories")
+}
+
 func candidateFiles(start string, name string) []string {
 	var files []string
 	for dir := filepath.Clean(start); ; dir = filepath.Dir(dir) {
@@ -139,4 +191,16 @@ func candidateFiles(start string, name string) []string {
 		}
 	}
 	return files
+}
+
+func candidateRelativePaths(start string, relative string) []string {
+	var paths []string
+	for dir := filepath.Clean(start); ; dir = filepath.Dir(dir) {
+		paths = append(paths, filepath.Join(dir, relative))
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+	}
+	return paths
 }

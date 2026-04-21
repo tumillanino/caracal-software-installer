@@ -138,11 +138,6 @@ func actionsAvailable(actions []catalog.Action) bool {
 }
 
 func markerExists(marker string) bool {
-	if strings.ContainsAny(marker, "*?[") {
-		matches, err := filepath.Glob(marker)
-		return err == nil && len(matches) > 0
-	}
-
 	target := marker
 	if !filepath.IsAbs(marker) {
 		home, err := os.UserHomeDir()
@@ -172,5 +167,9 @@ func commandExists(command string) bool {
 }
 
 func looksLikePath(value string) bool {
+	if strings.Contains(value, "://") {
+		return false
+	}
+
 	return strings.Contains(value, string(os.PathSeparator)) || strings.HasPrefix(value, ".")
 }
