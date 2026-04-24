@@ -26,6 +26,7 @@ jobs:
         run: |
           set -euo pipefail
           dnf -y install \
+            curl \
             gcc \
             git \
             golang \
@@ -122,19 +123,20 @@ jobs:
             rpmbuild/SRPMS/*.src.rpm
             rpmbuild/RPMS/**/*.rpm
 
-      - name: Submit SRPM to COPR
-        if: startsWith(github.ref, 'refs/tags/v') && vars.COPR_PROJECT != '' && secrets.COPR_CONFIG != ''
+      - name: Trigger COPR webhook
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
-          COPR_CONFIG: ${{ secrets.COPR_CONFIG }}
-          COPR_PROJECT: ${{ vars.COPR_PROJECT }}
+          COPR_WEBHOOK_URL: ${{ secrets.COPR_WEBHOOK_URL }}
         run: |
           set -euo pipefail
 
-          dnf -y install copr-cli
-          dnf clean all
+          if [[ -z "${COPR_WEBHOOK_URL}" ]]; then
+            echo "COPR_WEBHOOK_URL is not set; skipping COPR trigger."
+            exit 0
+          fi
 
-          install -d -m700 ~/.config
-          printf '%s\n' "${COPR_CONFIG}" > ~/.config/copr
-          chmod 600 ~/.config/copr
-
-          copr-cli build "${COPR_PROJECT}" rpmbuild/SRPMS/*.src.rpm
+          curl --fail --silent --show-error \
+            -X POST \
+            -H 'Content-Type: application/json' \
+            -d '{}' \
+            "${COPR_WEBHOOK_URL}"
