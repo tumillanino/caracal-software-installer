@@ -1,5 +1,5 @@
 %global debug_package %{nil}
-%global upstream_version %{?version_override}%{!?version_override:1.8}
+%global upstream_version %{?version_override}%{!?version_override:1.10}
 %global source_tag %{?source_tag_override}%{!?source_tag_override:v%{upstream_version}}
 
 Name:           caracal-software-installer
@@ -7,7 +7,7 @@ Version:        %{upstream_version}
 Release:        %{?release_override}%{!?release_override:1}%{?dist}
 Summary:        Catalog-driven installer for optional audio software
 License:        MIT
-URL:            https://github.com/caracal-os/caracal-software-installer
+URL:            https://github.com/tumillanino/caracal-software-installer
 Source0:        %{url}/archive/refs/tags/%{source_tag}.tar.gz#/%{name}-%{version}.tar.gz
 
 BuildRequires:  gcc
