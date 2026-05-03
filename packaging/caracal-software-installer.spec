@@ -1,5 +1,5 @@
 %global debug_package %{nil}
-%global upstream_version %{?version_override}%{!?version_override:1.12}
+%global upstream_version %{?version_override}%{!?version_override:1.13}
 %global source_tag %{?source_tag_override}%{!?source_tag_override:v%{upstream_version}}
 
 Name:           caracal-software-installer
